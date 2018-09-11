@@ -1,12 +1,16 @@
 <?php
 namespace Inc;
 
+use Inc\Ajax;
+
 class Connection {
     private $id;
     public $server;
     public $client;
     public $isServer = false;
     public $connectedTo;
+
+    private $server_res;
 
     function __construct( $id, $client, $server ) {
         $this->id = $id;
@@ -19,31 +23,24 @@ class Connection {
     }
 
     public function sendServerMessage( $message ) {
-        echo "sending message to server";
         if ( $this->isServer && $this->server && $message ) {
-            $this->server->send([ 'data' => $message ] );
+            $this->server->send( json_encode( $message ) );
         }
 
         return $this;
     }
 
     public function sendClientMessage( $message ) {
-        echo "sending message to client";
-
         if ( $this->client && $message ) {
-            $this->client->send([ 'data' => $message ] );
+            $this->client->send( json_encode( $message ) );
         }
 
         return $this;
     }
 
     public function closeConnections() {
-        // if ( $this->server ) {
-        //     $this->server->close();
-        // }
-
-        if ( !$this->isServer ) {
-            // self::findConnectionById();
+        if ( $this->server ) {
+            $this->server->close();
         }
 
         if ( $this->client ) {
@@ -73,5 +70,9 @@ class Connection {
         }
 
         return false;
+    }
+
+    public function getServerRes() {
+        return $this->server_res;
     }
 }

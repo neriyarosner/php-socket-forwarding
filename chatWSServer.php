@@ -9,39 +9,38 @@ use Ratchet\ConnectionInterface as Conn;
 use Ratchet\RFC6455\Messaging\MessageInterface as MsgInterface;
 
 use Ratchet\Server\IoServer;
+use React\Socket\Server as Reactor;
 use Ratchet\Http\HttpServer;
 use Ratchet\WebSocket\WsServer;
 
 use React\EventLoop\Factory as ReactFactory;
 
 
-use ElephantIO\Client as ElephantClient;
-use ElephantIO\Engine\SocketIO\Version2X;
-// use ElephantIO\Engine\AbstractSocketIO;
-
 class Chat implements MessageComponentInterface {
     protected $connections;
     protected $node_socket;
 
-    public function __construct() {
+    private $loop;
+
+    public function __construct( $loop )
+    {
+        $this->loop = $loop;
         $this->connections = new \SplObjectStorage;
     }
 
-    public function onOpen( Conn $conn ) {
-        echo "\ncreating connection";
-
+    public function onOpen( Conn $conn )
+    {
         $this->createConnection($conn);
     }
 
-    public function onMessage( Conn $from, $data ) {
-        echo "\ngot message";
-
+    public function onMessage( Conn $from, $data )
+    {
         // $msg = json_decode( $data );
         $numRecv = count( $this->connections ) - 1;
         $connection = Connection::findConnectionById( $this->connections, $from->resourceId );
 
-        if ( $connection ) {
-            echo sprintf( 'Connection %d sending message to %d server' . "\n", $from->resourceId, $numRecv );
+        if ( $connection )
+        {
             $connection->sendServerMessage( $data );
         }
         else {
@@ -49,76 +48,121 @@ class Chat implements MessageComponentInterface {
         }
     }
 
-    public function onClose(Conn $conn) {
-        // The connection is closed, remove it, as we can no longer send it messages
+    public function onClose(Conn $conn)
+    {
+        echo "\nConnection {$conn->resourceId} has disconnected\n";
 
         $connection = Connection::findConnectionById( $this->connections, $conn->resourceId );
-        if ( $connection ) {
+        if ( $connection )
+        {
             $connection->closeConnections();
-
             $this->connections->detach($connection);
         }
 
-        echo "\nConnection {$conn->resourceId} has disconnected\n";
     }
 
-    public function onError(Conn $conn, \Exception $e) {
+    public function onError(Conn $conn, \Exception $e)
+    {
         echo "\nAn error has occurred: {$e->getMessage()}";
 
-        Connection::findConnectionById( $this->connections, $conn->resourceId ).closeConnections();
+        $connection = Connection::findConnectionById( $this->connections, $conn->resourceId );
+        if ( $connection )
+        {
+            $connection->closeConnections();
+            $this->connections->detach($connection);
+        }
     }
 
-    public function createConnection( $conn ) {
-        $loop = React\EventLoop\Factory::create();
-        $reactConnector = new React\Socket\Connector( $loop, [
-            'dns' => '8.8.8.8',
-            'timeout' => 10
-        ] );
-        $connector = new Ratchet\Client\Connector( $loop, $reactConnector );
+    public function onServerOpen(Conn $conn, $serverConnection)
+    {
+        $connection = new Connection( $conn->resourceId, $conn, $serverConnection );
+        $connection->sendServerMessage( [ 'userID' => $conn->resourceId ] );
+
+        $this->connections->attach( $connection );
+    }
+
+    public function onServerMessage( $msg, Conn $conn, $serverConnection )
+    {
+        $data = json_decode( $msg );
+        $connection = Connection::findConnectionById( $this->connections, $conn->resourceId );
+
+        if ( property_exists($data, 'userID') && $data->userID === $conn->resourceId )
+        {
+            $connection->sendClientMessage( [ 'init' => true, 'connectionId' => $data->userID ] );
+        }
+        elseif ( property_exists($data, 'status') && $data->status === 'ok' )
+        {
+            $connection->sendClientMessage( $data );
+        }
+        elseif ( property_exists($data, 'error') )
+        {
+            echo "\ngot error from server!";
+            $connection->sendClientMessage( $data );
+        }
+    }
+
+    public function onServerError( $e, Conn $conn )
+    {
+        echo "\nCould not connect: {$e->getMessage()}";
+
+        $connection = Connection::findConnectionById( $this->connections, $conn->resourceId );
+
+        $connection->closeConnections();
+        // $this->loop->stop();
+    }
+
+    public function onServerClose( Conn $conn, $code, $reason )
+    {
+        echo "\nserverConnection closed ({$code} - {$reason})";
+
+        $connection = Connection::findConnectionById( $this->connections, $conn->resourceId );
+        $connection->closeConnections();
+    }
+
+    public function createConnection( Conn $conn )
+    {
+        $reactConnector = new React\Socket\Connector( $this->loop,
+            [
+                'dns' => '8.8.8.8',
+                'timeout' => 10
+            ]
+        );
+        $connector = new Ratchet\Client\Connector( $this->loop, $reactConnector );
 
         $connector( 'ws://127.0.0.1:8889', [], ['Origin' => 'http://localhost'] )
-        ->then( function( Ratchet\Client\WebSocket $serverConnection ) use ( $conn ) {
-            echo "\nconnection created";
+        ->then( function( Ratchet\Client\WebSocket $serverConnection ) use ( $conn )
+            {
+                $this->onServerOpen( $conn, $serverConnection );
 
-            $serverConnection->on( 'message', function( MsgInterface $msg ) use ( $serverConnection, $conn ) {
-                echo "\ngot message from server: " . $msg;
+                $serverConnection->on( 'message', function( MsgInterface $msg ) use ( $serverConnection, $conn )
+                    {
+                        $this->onServerMessage( $msg, $conn, $serverConnection );
+                    }
+                );
 
-                $data = json_decode( $msg );
-
-                if ( $data->userID && $data->userID === $conn->resourceId ) {
-                    $connection = new Connection( $conn->resourceId, $conn, $serverConnection );
-                    $this->connections->attach( $connection );
-                } elseif ( !$data->userID && $data->msg ) {
-                    $connection = Connection::findConnectionById( $this->connections, $conn->resourceId );
-                    $connection->sendClientMessage( $data->msg );
-                }
-            } );
-
-            $serverConnection->on( 'close', function( $code = null, $reason = null ) {
-                echo "serverConnection closed ({$code} - {$reason})\n";
-            } );
-
-            $serverConnection->send( json_encode( [ 'userID' => $conn->resourceId ] ) );
-        }, function( \Exception $e ) use ( $loop ) {
-            echo "Could not connect: {$e->getMessage()}\n";
-
-            $connection = new Connection( $conn->resourceId, $conn, null );
-            $this->connections->attach( $connection );
-
-            $loop->stop();
-        });
-
-        $loop->run();
+                $serverConnection->on( 'close', function( $code = null, $reason = null ) use ( $conn )
+                    {
+                        $this->onServerClose( $conn, $code, $reason );
+                    }
+                );
+            }, function( \Exception $e ) use ( $conn )
+            {
+                $this->onServerError( $e, $conn );
+            }
+        );
     }
 }
 
-$server = IoServer::factory(
+$loop = ReactFactory::create();
+
+$server = new IoServer(
     new HttpServer(
         new WsServer(
-            new Chat()
+            new Chat( $loop )
         )
     ),
-    9000
+    new Reactor( '0.0.0.0' . ':' . 9000, $loop ),
+    $loop
 );
 
 $server->run();
