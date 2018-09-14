@@ -13,27 +13,39 @@ class Ajax {
         $this->method = $method;
         $this->url = self::$serverURI . $url;
         $this->args = $args ? $args : array(
-            'method' => \WP_REST_Server::READABLE,
-            'headers' => array(
-                'origin' => 'localhost:12555'
+            'http' => array(
+                'header'  => "Content-type: application/x-www-form-urlencoded\r\nOrigin:localhost:12555\r\n",
+                'method'  => strtoupper( $method ),
             )
         );
     }
 
     public function send( $data ) {
-        $res = call_user_func('wp_remote_' . $this->method, $this->url, $this->args );
+        $this->args['http']['content'] = http_build_query( [ 'ws_php_body' => $data ] );
+        $context = stream_context_create($this->args);
 
-        if ( is_wp_error( $res ) ) {
-            return self::error_handler( $res );
+        $result = file_get_contents($this->url, false, $context);
+
+        if ($result === FALSE) {
+            echo "$result";
+            return self::error_handler( $result );
+        } else {
+            try {
+                $result = json_decode($result);
+                if ($result->error) {
+                    echo "\nReceived an error from nodejs: " . $result->message;
+                }
+            } catch (\Exception $exception) {
+                echo $exception;
+            }
         }
 
-        $body = json_decode( $res['body'] );
 
-        return $body;
+        return $result;
     }
 
     public static function error_handler( $error ) {
-        $error_string = $error->get_error_message();
+        $error_string = $error;// $error->get_error_message();
 
         return [ 'error' => '<div id="message" class="error"><p>' . $error_string . '</p></div>' ];
     }

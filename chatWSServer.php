@@ -15,22 +15,43 @@ use Ratchet\WebSocket\WsServer;
 
 use React\EventLoop\Factory as ReactFactory;
 
+use Psr\Http\Message\ServerRequestInterface;
+use React\EventLoop\Factory;
+use React\Http\Response;
+use React\Http\Server;
+
+class Configurator {
+    private static $_configuration = array();
+
+    public static function write($key, $value) {
+        self::$_configuration[$key] = $value;
+    }
+
+    public static function read($key) {
+        return self::$_configuration[$key];
+    }
+}
 
 class Chat implements MessageComponentInterface {
-    protected $connections;
     protected $node_socket;
+    protected $connections;
 
     private $loop;
 
     public function __construct( $loop )
     {
         $this->loop = $loop;
-        $this->connections = new \SplObjectStorage;
+        $this->connections = Configurator::read('connections');
     }
 
     public function onOpen( Conn $conn )
     {
-        $this->createConnection($conn);
+        $connection = new Connection( $conn->resourceId, $conn, null);
+        echo "\nsending init to client: " . $conn->resourceId;
+        $connection->sendClientMessage( [ 'init' => true, 'connectionID' => $conn->resourceId ] );
+
+        $this->connections->attach( $connection );
+
     }
 
     public function onMessage( Conn $from, $data )
@@ -39,9 +60,16 @@ class Chat implements MessageComponentInterface {
         $numRecv = count( $this->connections ) - 1;
         $connection = Connection::findConnectionById( $this->connections, $from->resourceId );
 
-        if ( $connection )
+        if ( $connection && $data )
         {
-            $connection->sendServerMessage( $data );
+            $parsedData = json_decode( $data );
+
+            if ( property_exists( $parsedData, 'init' ) && $parsedData->init ) {
+                echo "\nrecieved init from client and passing to server " . $from->resourceId;
+                $connection->sendServerInit( $from->resourceId, $parsedData );
+            } else {
+                $connection->sendServerMessage( $data );
+            }
         }
         else {
             echo "\nNO SERVER";
@@ -72,88 +100,36 @@ class Chat implements MessageComponentInterface {
             $this->connections->detach($connection);
         }
     }
-
-    public function onServerOpen(Conn $conn, $serverConnection)
-    {
-        $connection = new Connection( $conn->resourceId, $conn, $serverConnection );
-        $connection->sendServerMessage( [ 'userID' => $conn->resourceId ] );
-
-        $this->connections->attach( $connection );
-    }
-
-    public function onServerMessage( $msg, Conn $conn, $serverConnection )
-    {
-        $data = json_decode( $msg );
-        $connection = Connection::findConnectionById( $this->connections, $conn->resourceId );
-
-        if ( property_exists($data, 'userID') && $data->userID === $conn->resourceId )
-        {
-            $connection->sendClientMessage( [ 'init' => true, 'connectionId' => $data->userID ] );
-        }
-        elseif ( property_exists($data, 'status') && $data->status === 'ok' )
-        {
-            $connection->sendClientMessage( $data );
-        }
-        elseif ( property_exists($data, 'error') )
-        {
-            echo "\ngot error from server!";
-            $connection->sendClientMessage( $data );
-        }
-    }
-
-    public function onServerError( $e, Conn $conn )
-    {
-        echo "\nCould not connect: {$e->getMessage()}";
-
-        $connection = Connection::findConnectionById( $this->connections, $conn->resourceId );
-
-        $connection->closeConnections();
-        // $this->loop->stop();
-    }
-
-    public function onServerClose( Conn $conn, $code, $reason )
-    {
-        echo "\nserverConnection closed ({$code} - {$reason})";
-
-        $connection = Connection::findConnectionById( $this->connections, $conn->resourceId );
-        $connection->closeConnections();
-    }
-
-    public function createConnection( Conn $conn )
-    {
-        $reactConnector = new React\Socket\Connector( $this->loop,
-            [
-                'dns' => '8.8.8.8',
-                'timeout' => 10
-            ]
-        );
-        $connector = new Ratchet\Client\Connector( $this->loop, $reactConnector );
-
-        $connector( 'ws://127.0.0.1:8889', [], ['Origin' => 'http://localhost'] )
-        ->then( function( Ratchet\Client\WebSocket $serverConnection ) use ( $conn )
-            {
-                $this->onServerOpen( $conn, $serverConnection );
-
-                $serverConnection->on( 'message', function( MsgInterface $msg ) use ( $serverConnection, $conn )
-                    {
-                        $this->onServerMessage( $msg, $conn, $serverConnection );
-                    }
-                );
-
-                $serverConnection->on( 'close', function( $code = null, $reason = null ) use ( $conn )
-                    {
-                        $this->onServerClose( $conn, $code, $reason );
-                    }
-                );
-            }, function( \Exception $e ) use ( $conn )
-            {
-                $this->onServerError( $e, $conn );
-            }
-        );
-    }
 }
 
+$http_server_handler = function(ServerRequestInterface $request) {
+    $body = $request->getBody();
+    $data = json_decode( $body );
+
+    if ( $data && property_exists( $data, 'connectionID' ) ) {
+        $connections = Configurator::read('connections');
+        $connection = Connection::findConnectionById( $connections, $data->connectionID );
+
+        if ($connection) {
+            $connection->sendClientMessage($data);
+        } else {
+            echo "\nNO CONNECTION";
+        }
+    } else {
+        echo "\nReceived empty body: " . $body . '.';
+    }
+
+    return new Response(
+        200,
+        array(
+            'Content-Type' => 'text/plain'
+        )
+    );
+};
+
 $loop = ReactFactory::create();
+
+Configurator::write('connections', new \SplObjectStorage);
 
 $server = new IoServer(
     new HttpServer(
@@ -165,4 +141,9 @@ $server = new IoServer(
     $loop
 );
 
-$server->run();
+$http_server = new Server($http_server_handler);
+
+$socket = new React\Socket\Server(9001, $loop);
+$http_server->listen($socket);
+
+$loop->run();

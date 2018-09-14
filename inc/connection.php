@@ -23,8 +23,22 @@ class Connection {
     }
 
     public function sendServerMessage( $message ) {
-        if ( $this->isServer && $this->server && $message ) {
-            $this->server->send( json_encode( $message ) );
+        if ( $message ) {
+            $ajax = new Ajax("POST", '/support/sendMessage', null);
+            $res = $ajax->send( $message );
+            $this->server_res = $res;
+        }
+
+        return $this;
+    }
+
+    public function sendServerInit( $connectionID, $data ) {
+        if ( $connectionID && $data ) {
+            $ajax = new Ajax("POST", '/support/socketInit', null);
+            $res = $ajax->send( json_encode( [ 'supportID' => $data->supportID,  'init' => true, 'connectionID' => $connectionID, 'user' => $data->user ] ) );
+            $this->server_res = $res;
+        } else {
+            echo "\nNo connection id " . $connectionID . " or data " . json_encode($data);
         }
 
         return $this;
@@ -61,7 +75,7 @@ class Connection {
     }
 
     public static function findConnectionById( $connections, $id ) {
-        foreach ( $connections as $connection ) {
+        foreach ( array_reverse( $connections ) as $connection ) {
             if ( $id === $connection->id ) {
                 return $connection;
             }
