@@ -4,28 +4,27 @@ namespace Inc;
 use Inc\Ajax;
 
 class Connection {
-    private $id;
+    public $id;
     public $server;
     public $client;
+    public $supportID;
     public $isServer = false;
     public $connectedTo;
 
     private $server_res;
 
-    function __construct( $id, $client, $server ) {
+    function __construct( $id, $client, $server = null, $supportID = null ) {
         $this->id = $id;
         $this->client = $client;
-
-        if ( $server ) {
-            $this->server = $server;
-            $this->isServer = true;
-        }
+        $this->supportID = $supportID;
+        $this->server = $server;
+        $this->isServer = !!$server;
     }
 
     public function sendServerMessage( $message ) {
         if ( $message ) {
             $ajax = new Ajax("POST", '/support/sendMessage', null);
-            $res = $ajax->send( $message );
+            $res = $ajax->send( gettype($message) === 'string' ? $message : json_encode($message) );
             $this->server_res = $res;
         }
 
@@ -36,17 +35,22 @@ class Connection {
         if ( $connectionID && $data ) {
             $ajax = new Ajax("POST", '/support/socketInit', null);
             $res = $ajax->send( json_encode( [ 'supportID' => $data->supportID,  'init' => true, 'connectionID' => $connectionID, 'user' => $data->user ] ) );
-            $this->server_res = $res;
+
+            if ( property_exists( $res, 'error' ) && $res->error ) {
+                echo "\nstatus: " . $res->status . ' in server init: ' . $res->message;
+                return $res->error;
+            }
+
+            return $res;
         } else {
             echo "\nNo connection id " . $connectionID . " or data " . json_encode($data);
+            return false;
         }
-
-        return $this;
     }
 
     public function sendClientMessage( $message ) {
         if ( $this->client && $message ) {
-            $this->client->send( json_encode( $message ) );
+            $this->client->send( gettype($message) === 'string' ? $message : json_encode($message) );
         }
 
         return $this;
@@ -74,16 +78,35 @@ class Connection {
         $this->isServer = $isServer;
     }
 
-    public static function findConnectionById( $connections, $id ) {
-        foreach ( array_reverse( $connections ) as $connection ) {
+    public function setSupportID( $supportID ) {
+        $this->supportID = $supportID;
+    }
+
+    public static function findConnectionById( \SplObjectStorage $connections, $id ) {
+        $last_matching_connection = false;
+
+        foreach ( $connections as $connection ) {
             if ( $id === $connection->id ) {
-                return $connection;
+                $last_matching_connection = $connection;
+                // return $connection;
             }
         }
+
+        return $last_matching_connection;
+    }
+
+    public static function findConnectionBySupportId( \SplObjectStorage $connections, $supportID ) {
+        $last_matching_connection = false;
+
         foreach ( $connections as $connection ) {
+
+            if ( $supportID === $connection->supportID ) {
+                $last_matching_connection = $connection;
+                // return $connection;
+            }
         }
 
-        return false;
+        return $last_matching_connection;
     }
 
     public function getServerRes() {

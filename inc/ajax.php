@@ -8,7 +8,7 @@ class Ajax {
 
     public static $serverURI = "http://127.0.0.1:8888";
 
-    function __construct( $method, $url, $args )
+    function __construct( $method, $url, $args = false)
     {
         $this->method = $method;
         $this->url = self::$serverURI . $url;
@@ -20,23 +20,23 @@ class Ajax {
         );
     }
 
-    public function send( $data ) {
+    public function send( $data = null ) {
         $this->args['http']['content'] = http_build_query( [ 'ws_php_body' => $data ] );
         $context = stream_context_create($this->args);
 
         $result = file_get_contents($this->url, false, $context);
 
         if ($result === FALSE) {
-            echo "$result";
+            echo "\n error false result: $result";
             return self::error_handler( $result );
         } else {
             try {
                 $result = json_decode($result);
-                if ($result->error) {
-                    echo "\nReceived an error from nodejs: " . $result->message;
+                if ( property_exists( $result, 'error' ) && $result->error ) {
+                    echo "\nReceived an error from nodejs: $result->message for request: $this->url";
                 }
-            } catch (\Exception $exception) {
-                echo $exception;
+            } catch ( \Exception $exception ) {
+                echo "\nexception: $exception, result: $result";
             }
         }
 
