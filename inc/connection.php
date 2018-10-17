@@ -82,6 +82,10 @@ class Connection {
         $this->supportID = $supportID;
     }
 
+    public function isConnectionOpen(  ) {
+        return $this->socket->readyState === 1;
+    }
+
     public static function findConnectionById( \SplObjectStorage $connections, $id ) {
         $last_matching_connection = false;
 

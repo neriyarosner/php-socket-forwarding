@@ -113,7 +113,9 @@ class Chat implements MessageComponentInterface {
         $is_representative = false;
         $representative;
 
-        while ( !$is_representative ) {
+        $connection = Connection::findConnectionById( $this->connections, $connId );
+
+        while ( !$is_representative && $connection->isConnectionOpen() ) {
             $ajax = new Ajax( "GET", "/support/getSupportRepresentative/$supportId" );
             $result = $ajax->send();
 
@@ -128,7 +130,10 @@ class Chat implements MessageComponentInterface {
             }
         }
 
-        $connection = Connection::findConnectionById( $this->connections, $connId );
+        if ( !$connection->isConnectionOpen() ) {
+            echo "\nnot getting rep anymore connection closed..";
+        }
+
         $connection->sendClientMessage( [ $is_representative ? 'representative' : 'error' => $representative, 'connectionID' => $connId ] );
 
         if ( $is_representative ) {
@@ -199,9 +204,18 @@ $http_server_handler = function(ServerRequestInterface $request) {
     }
 };
 
+Configurator::write('connections', new \SplObjectStorage);
+
 $loop = ReactFactory::create();
 
-Configurator::write('connections', new \SplObjectStorage);
+// Set up our WebSocket server for clients wanting real-time updates
+$webSock = new React\Socket\Server( '0.0.0.0' . ':' . 9000, $loop);
+$webSock = new React\Socket\SecureServer($webSock, $loop, [
+    'local_cert'        => 'C:/xampp/apache/conf/ssl.crt/server.crt', // path to your cert
+    'local_pk'          => 'C:/xampp/apache/conf/ssl.key/server.key', // path to your server private key
+    'allow_self_signed' => TRUE, // Allow self signed certs (should be false in production)
+    'verify_peer' => FALSE
+]);
 
 $server = new IoServer(
     new HttpServer(
@@ -209,8 +223,7 @@ $server = new IoServer(
             new Chat( $loop )
         )
     ),
-    new Reactor( '0.0.0.0' . ':' . 9000, $loop ),
-    $loop
+    $webSock
 );
 
 $http_server = new Server($http_server_handler);
@@ -219,3 +232,4 @@ $socket = new React\Socket\Server(9001, $loop);
 $http_server->listen($socket);
 
 $loop->run();
+
