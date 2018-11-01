@@ -1,5 +1,5 @@
 <?php
-namespace Inc;
+namespace Inc\Libs;
 
 class Ajax {
     public $method;
@@ -14,7 +14,7 @@ class Ajax {
         $this->url = self::$serverURI . $url;
         $this->args = $args ? $args : array(
             'http' => array(
-                'header'  => "Content-type: application/x-www-form-urlencoded\r\nOrigin:localhost:12555\r\n",
+                'header'  => "Content-type: application/x-www-form-urlencoded\r\nOrigin:localhost:7347\r\n",
                 'method'  => strtoupper( $method ),
             )
         );
@@ -31,15 +31,14 @@ class Ajax {
             return self::error_handler( $result );
         } else {
             try {
-                $result = json_decode($result);
-                if ( property_exists( $result, 'error' ) && $result->error ) {
-                    echo "\nReceived an error from nodejs: $result->message for request: $this->url";
+                $result = json_decode( $result );
+                if ( $result && property_exists( $result, 'error' ) && $result->error ) {
+                    // Output::error("Received an error from nodejs: $result->message for request: $this->url");
                 }
             } catch ( \Exception $exception ) {
                 echo "\nexception: $exception, result: $result";
             }
         }
-
 
         return $result;
     }
@@ -47,7 +46,7 @@ class Ajax {
     public static function error_handler( $error ) {
         $error_string = $error;// $error->get_error_message();
 
-        return [ 'error' => '<div id="message" class="error"><p>' . $error_string . '</p></div>' ];
+        return (object)[ 'error' => true, 'message' => $error_string, 'html' => '<div id="message" class="error"><p>' . $error_string . '</p></div>' ];
     }
 }
 
