@@ -6,6 +6,9 @@
             "email": "neriyarosner@gmail.com"
         }
     ],
+    "config": {
+        "optimize-autoloader": true
+    },
     "require": {
         "cboden/ratchet": "^0.4.1",
         "ratchet/pawl": "dev-master",
@@ -17,5 +20,10 @@
         "psr-4": {
             "Inc\\": "./inc"
         }
-    }
+    },
+    "classmap": [
+      "inc/",
+      "inc/Libs",
+      "inc/Api"
+    ]
 }
