@@ -6,7 +6,7 @@ class Ajax {
     public $url;
     public $args;
 
-    public static $serverURI = "http://127.0.0.1:8888";
+    public static $serverURI = "https://app.cargo-express.co.il";
 
     function __construct( $method, $url, $args = false)
     {
